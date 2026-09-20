@@ -72,6 +72,8 @@ def simulate(
         the two linear polarization channels, resulting in a factor of 0.5 from
         the value inputted here. This is done even if only one polarization
         channel is simulated.
+        Values may be negative (e.g. residual or mean-subtracted sky models);
+        the sign is carried exactly through the visibility computation.
         Shape=(NSRCS,).
     beam_list : list of UVBeam, optional
         If specified, evaluate primary beam values directly using UVBeam
@@ -184,8 +186,9 @@ def simulate(
     coord_method = CoordinateRotation._methods[coord_method]
 
     coord_method_params = coord_method_params or {}
+    negative_sky = bool(np.any(I_sky < 0))
     coords = coord_method(
-        flux=np.sqrt(0.5 * I_sky),
+        flux=np.sign(I_sky) * np.sqrt(0.5 * np.abs(I_sky)),
         times=times,
         telescope_loc=telescope_loc,
         skycoords=skycoords,
@@ -249,6 +252,10 @@ def simulate(
 
         for c in range(nchunks):
             crd_top, flux_sqrt, nn = coords.select_chunk(c, t)
+            # Per-source sign vector for the signed factorization
+            # V = Z* diag(sgn) Z^T. Z flattens (nax, nsrc) on its last axis
+            # (index ax*nsrc + s), so tile (whole-array repeat), not repeat.
+            sgn = np.tile(np.sign(flux_sqrt), nax) if negative_sky else None
             logdebug("crdtop", crd_top[:, :nn])
             logdebug("Isqrt", flux_sqrt[:nn])
 
@@ -262,7 +269,7 @@ def simulate(
             z = zcalc(flux_sqrt, A, exptau, bmfunc.beam_idx)
             logdebug("Z", z[..., :nn])
 
-            matprod(z, c)
+            matprod(z, c, sgn=sgn)
 
             if not t % report_chunk and t != ntimes - 1 and c == nchunks - 1:
                 plast, mlast = log_progress(tstart, plast, t + 1, ntimes, pr, mlast)

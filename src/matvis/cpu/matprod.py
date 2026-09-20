@@ -8,7 +8,9 @@ from ..core.matprod import MatProd
 class CPUMatMul(MatProd):
     """Use simple numpy.dot to perform the source-summing operation."""
 
-    def compute(self, z: np.ndarray, out: np.ndarray) -> np.ndarray:
+    def compute(
+        self, z: np.ndarray, out: np.ndarray, sgn: np.ndarray | None = None
+    ) -> np.ndarray:
         """Perform the source-summing operation for a single time and chunk.
 
         Parameters
@@ -17,8 +19,15 @@ class CPUMatMul(MatProd):
             Complex integrand. Shape=(Nfeed, Nant, Nax, Nsrc).
         out
             Output array, shaped as (Nfeed, Nfeed, Npairs).
+        sgn
+            Optional per-column source-sign vector, length ``z.shape[-1]``, for
+            skies containing negative brightness. ``None`` (all-non-negative sky)
+            uses the legacy path.
         """
-        v = z.conj().dot(z.T)
+        # sgn carries the flux sign in ONE factor only: V = Z* diag(sgn) Z^T,
+        # so each source contributes sign(I)*|I|/2 = I/2 exactly.
+        zs = z if sgn is None else z * sgn
+        v = z.conj().dot(zs.T)
 
         # Separate feed/ant axes to make indexing easier
         v.shape = (self.nant, self.nfeed, self.nant, self.nfeed)
@@ -35,7 +44,9 @@ class CPUMatMul(MatProd):
 class CPUVectorDot(MatProd):
     """Use a loop over specific pairs, performing a vdot over the source axis."""
 
-    def compute(self, z: np.ndarray, out: np.ndarray) -> np.ndarray:
+    def compute(
+        self, z: np.ndarray, out: np.ndarray, sgn: np.ndarray | None = None
+    ) -> np.ndarray:
         """Perform the source-summing operation for a single time and chunk.
 
         Parameters
@@ -44,10 +55,17 @@ class CPUVectorDot(MatProd):
             Complex integrand. Shape=(Nfeed, Nant, Nax, Nsrc).
         out
             Output array, shaped as (Nfeed, Nfeed, Npairs).
+        sgn
+            Optional per-column source-sign vector, length ``z.shape[-1]``, for
+            skies containing negative brightness. ``None`` (all-non-negative sky)
+            uses the legacy path.
         """
         z = z.reshape((self.nant, self.nfeed, -1))
+        # Sign goes on the unconjugated factor (sgn is real, so either side is
+        # mathematically identical): V = Z* diag(sgn) Z^T.
+        zs = z if sgn is None else z * sgn
 
         for i, (ai, aj) in enumerate(self.antpairs):
-            out[i] = z[aj].dot(z[ai].conj().T)  # dot(z[aj].T)
+            out[i] = zs[aj].dot(z[ai].conj().T)  # dot(zs[aj].T)
 
         return out

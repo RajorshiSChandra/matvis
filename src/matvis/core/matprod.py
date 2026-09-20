@@ -67,7 +67,7 @@ class MatProd(ABC):
         self.allocate_vis()
 
     @abstractmethod
-    def compute(self, z: np.ndarray, out: np.ndarray):
+    def compute(self, z: np.ndarray, out: np.ndarray, sgn: np.ndarray | None = None):
         """
         Perform the source-summing operation for a single time and chunk.
 
@@ -78,9 +78,16 @@ class MatProd(ABC):
         out
             Output array, shaped like the visibilities set in `allocate_vis`, but
             without the first chunk axis.
+        sgn
+            Optional per-column source-sign vector, length ``z.shape[-1]``, for
+            skies containing negative brightness (V = Z* diag(sgn) Z^T). ``None``
+            means an all-non-negative sky and must reproduce the legacy path
+            exactly.
         """
 
-    def __call__(self, z: np.ndarray, chunk: int) -> np.ndarray:
+    def __call__(
+        self, z: np.ndarray, chunk: int, sgn: np.ndarray | None = None
+    ) -> np.ndarray:
         """
         Perform the source-summing operation for a single time and chunk.
 
@@ -90,6 +97,8 @@ class MatProd(ABC):
             Complex integrand. Shape=(Nant, Nfeed, Nax, Nsrc).
         chunk
             The chunk index.
+        sgn
+            Optional per-column source-sign vector (see :meth:`compute`).
 
         Returns
         -------
@@ -97,7 +106,12 @@ class MatProd(ABC):
             The output array, shaped like the visibilities set in `allocate_vis`, but
             without the first chunk axis.
         """
-        self.compute(z, out=self.vis[chunk])
+        if sgn is None:
+            # Legacy call form: keeps subclasses with the pre-sgn compute()
+            # signature (e.g. GPU backends, external MatProd subclasses) working.
+            self.compute(z, out=self.vis[chunk])
+        else:
+            self.compute(z, out=self.vis[chunk], sgn=sgn)
         return self.vis[chunk]
 
     def sum_chunks(self, out: np.ndarray):
